@@ -249,57 +249,57 @@ app.get('/list/:secretCode', async (req, res) => {
 function createProxyForTarget(targetHost, targetPort) {
   return createProxyMiddleware({
     target: `http://${targetHost}:${targetPort}`,
-    changeOrigin: true,
+  changeOrigin: true,
     ws: true,
     secure: false,
     protocolRewrite: 'http',
-    onProxyReq: (proxyReq, req, res) => {
-      proxyReq.setHeader('X-Forwarded-Proto', 'http');
+  onProxyReq: (proxyReq, req, res) => {
+    proxyReq.setHeader('X-Forwarded-Proto', 'http');
       console.log(`🔄 Proxying request to ${targetHost}:${targetPort}: ${req.method} ${req.url}`);
-    },
-    onProxyRes: (proxyRes, req, res) => {
-      // Remove content-length to prevent issues with modified responses
-      delete proxyRes.headers['content-length'];
+  },
+  onProxyRes: (proxyRes, req, res) => {
+    // Remove content-length to prevent issues with modified responses
+    delete proxyRes.headers['content-length'];
+    
+    // Fix location headers if any
+    if (proxyRes.headers.location) {
+      proxyRes.headers.location = proxyRes.headers.location.replace('https://', 'http://');
+    }
+    
+    // Ensure content-security-policy doesn't block http content
+    if (proxyRes.headers['content-security-policy']) {
+      delete proxyRes.headers['content-security-policy'];
+    }
+    
+    // Modify HTML responses to rewrite image URLs
+    if (proxyRes.headers['content-type'] && proxyRes.headers['content-type'].includes('text/html')) {
+      let body = '';
+      const originalWrite = res.write;
+      const originalEnd = res.end;
       
-      // Fix location headers if any
-      if (proxyRes.headers.location) {
-        proxyRes.headers.location = proxyRes.headers.location.replace('https://', 'http://');
-      }
+      // Capture the response body
+      res.write = function(chunk) {
+        body += chunk.toString('utf8');
+        return true;
+      };
       
-      // Ensure content-security-policy doesn't block http content
-      if (proxyRes.headers['content-security-policy']) {
-        delete proxyRes.headers['content-security-policy'];
-      }
-      
-      // Modify HTML responses to rewrite image URLs
-      if (proxyRes.headers['content-type'] && proxyRes.headers['content-type'].includes('text/html')) {
-        let body = '';
-        const originalWrite = res.write;
-        const originalEnd = res.end;
-        
-        // Capture the response body
-        res.write = function(chunk) {
+      // Process and replace the response body on end
+      res.end = function(chunk) {
+        if (chunk) {
           body += chunk.toString('utf8');
-          return true;
-        };
+        }
         
-        // Process and replace the response body on end
-        res.end = function(chunk) {
-          if (chunk) {
-            body += chunk.toString('utf8');
-          }
-          
           // Replace URLs with local paths
           const targetUrlPattern = new RegExp(`https?://${targetHost}:${targetPort}/uploads/`, 'g');
           body = body.replace(targetUrlPattern, '/uploads/');
-          
-          // Write the modified response
-          originalWrite.call(res, body);
-          originalEnd.call(res);
-        };
-      }
+        
+        // Write the modified response
+        originalWrite.call(res, body);
+        originalEnd.call(res);
+      };
     }
-  });
+  }
+});
 }
 
 // Direct handler for images to bypass proxy security issues
@@ -436,6 +436,6 @@ process.on('SIGINT', () => {
   console.log('\n👋 Shutting down proxy service...');
   mongoose.connection.close().then(() => {
     console.log('📊 MongoDB connection closed');
-    process.exit(0);
+  process.exit(0);
   });
 });
